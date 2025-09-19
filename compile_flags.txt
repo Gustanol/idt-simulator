@@ -1,0 +1,8 @@
+-std=c11
+-Wall
+-Wextra
+-pedantic
+-I.
+-Iinclude
+-xc
+-D_GNU_SOURCE

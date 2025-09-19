@@ -1,0 +1,38 @@
+CompileFlags:
+Add:
+- "-std=c11"
+- "-Wall"
+- "-Wextra"
+- "-pedantic"
+- "-D_GNU_SOURCE"
+Remove:
+- "-W*"
+- "-std=c++*"
+
+Index:
+Background: Build
+StandardLibrary: Yes
+
+InlayHints:
+Enabled: Yes
+ParameterNames: Yes
+DeducedTypes: Yes
+
+Hover:
+ShowAKA: Yes
+
+Completion:
+AllScopes: No
+
+Diagnostics:
+ClangTidy:
+Add:
+- "readability-*"
+- "bugprone-*"
+- "performance-*"
+- "portability-*"
+Remove:
+- "readability-braces-around-statements"
+- "bugprone-easily-swappable-parameters"
+UnusedIncludes: Strict
+MissingIncludes: Strict
