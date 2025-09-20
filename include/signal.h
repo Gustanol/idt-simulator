@@ -6,10 +6,12 @@
  * struct to define handlers
  */
 typedef struct {
-    int id;
     char name[10];
     void (*f)(void);
 } IDT;
+
+// initialize an array of structs
+IDT idt[10];
 
 static struct termios old_tio, new_tio;
 
@@ -25,8 +27,14 @@ static struct termios old_tio, new_tio;
  }
  */
 
+// main functions
 void run_program(void);
 void init_non_block_input(void);
 void restore_terminal_settings(void);
+void init_idt_table(void);
+void find_command(char (*command)[10]);
+
+// user functions
+void list_commands(void);
 
 #endif /* SIGNAL_H */
