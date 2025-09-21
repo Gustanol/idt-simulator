@@ -10,7 +10,7 @@
 static void init_non_block_input(void);
 static void init_idt_table(void);
 static void restore_terminal_settings(void);
-static void find_command(char (*command)[10]);
+static void find_command(char (*command)[11]);
 static void find_command_by_symbol(const char* symbol);
 static void list_commands(void);
 
@@ -20,7 +20,7 @@ static void list_commands(void);
 typedef struct {
     char name[10];
     char description[50];
-    char (*keymaps)[3];
+    char keymaps[3];
     void (*f)(void);
 } IDT;
 
@@ -56,8 +56,8 @@ void run_program(void) {
 
     char c;
     do {
+        c = '\0';
         if (read(STDIN_FILENO, &c, 1) > 0) {
-            printf("%c", c);
             if (c == 'q') {
                 restore_terminal_settings();
                 break;
@@ -65,14 +65,27 @@ void run_program(void) {
                 /*
                  * store command entered by user
                  */
-                char command[10];
+                char command[11];
                 system("clear");
-                for (int i = 0; i < (int)sizeof(command); i++) {
-                    char c = getchar();
-                    if (c == 0x0A) {
-                        break;
+                int limit = (int)(sizeof(command) / sizeof(command[0]));
+                for (int i = 0; i <= limit; i++) {
+                    if (read(STDIN_FILENO, &c, 1) > 0) {
+                        if (i == limit) {
+                            command[i] = '\0';
+                        }
+
+                        if (c == 0x0A) /* hexadecimal value for return */ {
+                            command[i] = '\0';
+                            break;
+                        } else if (c == 0x08 && i != 0) /* hexadecimal value for backspace */ {
+                            command[i] = '\0';
+                            i--;
+                        } else {
+                            command[i] = c;
+                        }
+                    } else {
+                        perror("Key not read");
                     }
-                    command[i] = c;
                 }
 
                 /*
@@ -80,15 +93,24 @@ void run_program(void) {
                  */
                 find_command(&command);
                 strcpy(command, "");
+            } else if (c == 0x0A) /* hexadecimal value for return key */ {
+                continue;
+
+                /*
+                 * for other cases, try to find a symbol
+                 */
             } else {
                 /*
                  * this block will treat symbols and associate them to commands using the specific
                  * function 'find_command_by_symbol'
                  */
+                system("clear");
                 find_command_by_symbol(&c);
             }
+        } else {
+            perror("The entered key could not be read");
         }
-    } while (1);
+    } while (1);  // infinite loop (will be break only with 'q' or '^C' interrupt keymaps)
 }
 
 static void init_non_block_input(void) {
@@ -120,21 +142,21 @@ static void init_idt_table(void) {
      */
     strcpy(idt[0].name, "listc");
     strcpy(idt[0].description, "Lists all available commands");
-    *idt[0].keymaps[0] = 0x0C;
+    idt[0].keymaps[0] = 0x0C;
     idt[0].f = list_commands;
 }
 
 /*
  * function to find and call a function by the given command
  */
-static void find_command(char (*command)[10]) {
+static void find_command(char (*command)[11]) {
     for (int i = 0; i < (int)(sizeof(idt) / sizeof(idt[0])); i++) {
         if (strcmp(idt[i].name, *command) == 0) {
             idt[i].f();
             return;
         }
     }
-    printf("Command '%s' not found", *command);
+    printf("Command '%s' not found\n", *command);
 }
 
 /*
@@ -151,14 +173,14 @@ static void find_command_by_symbol(const char* symbol) {
      * if so, call the function associated to it
      */
     for (int i = 0; i < (int)(sizeof(idt) / sizeof(idt[0])); i++) {
-        for (int j = 0; j < (int)(sizeof(*idt[i].keymaps) / sizeof(*idt[i].keymaps[0])); j++) {
-            if (strcmp(idt[i].keymaps[j], symbol) == 0) {
+        for (int j = 0; j < (int)(sizeof(idt[i].keymaps) / sizeof(idt[i].keymaps[0])); j++) {
+            if (strcmp(&idt[i].keymaps[j], symbol) == 0) {
                 idt[i].f();
                 return;
             }
         }
     }
-    printf("Symbol '%c' not mapped", *symbol);
+    printf("Symbol '%c' not mapped\n", *symbol);
 }
 
 /*
