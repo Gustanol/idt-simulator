@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Wall -Wextra -std=c11 -g
+CFLAGS=-Wall -Wextra -std=c11 -g -I$(INCDIR)
 SRCDIR=src
 INCDIR=include
 BUILDDIR=build
@@ -10,17 +10,21 @@ OBJECTS=$(SOURCES:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
 
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(BUILDDIR)/$(TARGET)
 
-$(TARGET): $(OBJECTS)
+$(BUILDDIR)/$(TARGET): $(OBJECTS)
+	@mkdir -p $(BUILDDIR)
 	$(CC) $(OBJECTS) -o $@
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c
 	@mkdir -p $(BUILDDIR)
-	$(CC) $(CFLAGS) -I$(INCDIR) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(BUILDDIR) $(TARGET)
+	rm -rf $(BUILDDIR)
 
-test: $(TARGET)
-	./$(TARGET)
+run: $(BUILDDIR)/$(TARGET)
+	./$(BUILDDIR)/$(TARGET)
+
+debug: $(BUILDDIR)/$(TARGET)
+	gdb ./$(BUILDDIR)/$(TARGET)

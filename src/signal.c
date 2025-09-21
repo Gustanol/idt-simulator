@@ -1,10 +1,44 @@
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
 
 #include "signal.h"
+
+// prototypes
+static void init_non_block_input(void);
+static void init_idt_table(void);
+static void restore_terminal_settings(void);
+static void find_command(char (*command)[10]);
+static void list_commands(void);
+
+/*
+ * struct to define handlers
+ */
+typedef struct {
+    char name[10];
+    char description[50];
+    void (*f)(void);
+} IDT;
+
+// initialize an array of structs
+IDT idt[10];
+
+static struct termios old_tio, new_tio;
+
+/*
+ * Termios struct
+ struct termios {
+    tcflag_t c_iflag;  // input flags
+    tcflag_t c_oflag;  // output flags
+    tcflag_t c_cflag;  // control flags
+    tcflag_t c_lflag;  // local flags
+    cc_t c_cc[NCCS];   // control characters
+    ...
+ }
+ */
 
 void run_program(void) {
     /*
@@ -13,33 +47,43 @@ void run_program(void) {
     init_non_block_input();
     init_idt_table();
 
+    printf("IDT simulator\n");
+    printf(
+        "Type ':' to enter in command line and enter 'listc' command to list all available "
+        "commands\n\n");
+
     char c;
     do {
-        if (read(STDIN_FILENO, &c, 1)) {
+        if (read(STDIN_FILENO, &c, 1) > 0) {
             printf("%c", c);
-            if (c == *"q") {
+            if (c == 'q') {
+                restore_terminal_settings();
                 break;
             } else if (c == 0x3A) /* hexadecimal value for : */ {
-                restore_terminal_settings();
-
                 /*
                  * store command entered by user
                  */
                 char command[10];
-                printf("\n:");
-                scanf("%c", command);
+                system("clear");
+                for (int i = 0; i < (int)sizeof(command); i++) {
+                    char c = getchar();
+                    if (c == 0x0A) {
+                        break;
+                    }
+                    command[i] = c;
+                }
 
                 /*
                  * calls `find_command` function to try to find the entered command
                  */
                 find_command(&command);
-                init_non_block_input();
+                strcpy(command, "");
             }
         }
     } while (1);
 }
 
-void init_non_block_input(void) {
+static void init_non_block_input(void) {
     /*
      * read all current terminal settings and store it into old_tio (terminal input/output)
      */
@@ -54,24 +98,28 @@ void init_non_block_input(void) {
     tcsetattr(STDIN_FILENO, TCSANOW, &new_tio);  // apply settings
 }
 
-void restore_terminal_settings(void) {
+static void restore_terminal_settings(void) {
     /*
      * restore terminal settings using data stored in old_tio struct
      */
     tcsetattr(STDIN_FILENO, TCSANOW, &old_tio);
 }
 
-void init_idt_table(void) {
+static void init_idt_table(void) {
+    /*
+     * define 'listc' as a command
+     */
     strcpy(idt[0].name, "listc");
+    strcpy(idt[0].description, "Lists all available commands");
     idt[0].f = list_commands;
 }
 
 /*
  * function to find and call a function by the given command
  */
-void find_command(char (*command)[10]) {
-    for (int i = 0; (int)(sizeof(idt) / sizeof(idt[0])); i++) {
-        if (idt[i].name == *command) {
+static void find_command(char (*command)[10]) {
+    for (int i = 0; i < (int)(sizeof(idt) / sizeof(idt[0])); i++) {
+        if (strcmp(idt[i].name, *command) == 0) {
             idt[i].f();
             return;
         }
@@ -82,7 +130,7 @@ void find_command(char (*command)[10]) {
 /*
  * function to list all available commands
  */
-void list_commands(void) {
+static void list_commands(void) {
     /*
      * it iterates from zero to idt array size
      *
@@ -90,6 +138,8 @@ void list_commands(void) {
      * bytes, of the first (or another one) element
      */
     for (int i = 0; i < (int)(sizeof(idt) / sizeof(idt[0])); i++) {
-        printf("Command %d: %s", i, idt[i].name);
+        if (strcmp(idt[i].name, "") != 0) {
+            printf("- %s: %s\n", idt[i].name, idt[i].description);
+        }
     }
 }
