@@ -48,18 +48,19 @@ void run_program(void) {
     init_non_block_input();
     init_idt_table();
 
-    printf("IDT simulator\n");
+    printf("IDT simulator\n\n");
+    printf("- Type ':' to enter in command line\n");
     printf(
-        "Type ':' to enter in command line and enter 'listc' command to list "
-        "all available "
+        "- Use the 'listc' (in command line) command or the '^L' symbol to see all available "
         "commands\n\n");
 
     char c;
     do {
         c = '\0';
         if (read(STDIN_FILENO, &c, 1) > 0) {
-            if (c == 'q') {
+            if (c == 'q' || c == 0x03) {
                 restore_terminal_settings();
+                printf(": Program interrupted by user\n");
                 break;
             } else if (c == 0x3A) /* hexadecimal value for : */ {
                 /*
@@ -75,9 +76,13 @@ void run_program(void) {
                         }
 
                         if (c == 0x0A) /* hexadecimal value for return */ {
+                            if (i == 0) {
+                                continue;
+                            }
                             command[i] = '\0';
                             break;
                         } else if (c == 0x08 && i != 0) /* hexadecimal value for backspace */ {
+                            command[i - 1] = '\0';
                             command[i] = '\0';
                             i--;
                         } else {
