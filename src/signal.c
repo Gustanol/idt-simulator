@@ -1,18 +1,39 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
 
+#include "math-utils.h"
 #include "signal.h"
 
 // prototypes
+static void restore_terminal_settings(void);
 static void init_non_block_input(void);
 static void init_idt_table(void);
-static void restore_terminal_settings(void);
+static void init_signals_table(void);
+
+static void find_control_char(unsigned char command, char* result);
 static void find_command(char (*command)[11]);
 static void find_command_by_symbol(const char* symbol);
+
+/*
+ * user functions
+ */
 static void list_commands(void);
+static void trigger_signal(void);
+static void quit_program(void);
+
+/*
+ * associate signals to keys
+ */
+typedef struct {
+    char name[10];
+    unsigned char key;
+} SIGNALS;
+
+SIGNALS signals[5];
 
 /*
  * struct to define handlers
@@ -28,6 +49,16 @@ typedef struct {
 IDT idt[10];
 
 static struct termios old_tio, new_tio;
+
+/*
+ * struct to group some utils variables
+ */
+typedef struct {
+    _Bool quit;
+    char buffer[3];
+} UTILS;
+
+UTILS utils = {0};
 
 /*
  * Termios struct
@@ -47,22 +78,24 @@ void run_program(void) {
      */
     init_non_block_input();
     init_idt_table();
+    init_signals_table();
 
     printf("IDT simulator\n\n");
     printf("- Type ':' to enter in command line\n");
     printf(
-        "- Use the 'listc' (in command line) command or the '^L' symbol to see all available "
+        "- Use the 'listc' (in command line) command or the '^L' symbol to "
+        "see all available "
         "commands\n\n");
 
     char c;
     do {
-        c = '\0';
+        if (utils.quit) {
+            restore_terminal_settings();
+            printf("\n\nquit: Program interrupted by user\n");
+            break;
+        }
         if (read(STDIN_FILENO, &c, 1) > 0) {
-            if (c == 'q' || c == 0x03) {
-                restore_terminal_settings();
-                printf(": Program interrupted by user\n");
-                break;
-            } else if (c == 0x3A) /* hexadecimal value for : */ {
+            if (c == 0x3A) /* hexadecimal value for : */ {
                 /*
                  * store command entered by user
                  */
@@ -83,13 +116,12 @@ void run_program(void) {
                             break;
                         } else if (c == 0x08 && i != 0) /* hexadecimal value for backspace */ {
                             command[i - 1] = '\0';
-                            command[i] = '\0';
                             i--;
                         } else {
                             command[i] = c;
                         }
                     } else {
-                        perror("Key not read");
+                        perror("\nKey not read\n");
                     }
                 }
 
@@ -106,16 +138,17 @@ void run_program(void) {
                  */
             } else {
                 /*
-                 * this block will treat symbols and associate them to commands using the specific
-                 * function 'find_command_by_symbol'
+                 * this block will treat symbols and associate them to commands using
+                 * the specific function 'find_command_by_symbol'
                  */
                 system("clear");
                 find_command_by_symbol(&c);
             }
         } else {
-            perror("The entered key could not be read");
+            perror("\nThe entered key could not be read\n");
         }
-    } while (1);  // infinite loop (will be break only with 'q' or '^C' interrupt keymaps)
+    } while (1);  // infinite loop (will be break only with 'q' or '^C' interrupt
+                  // keymaps)
 }
 
 static void init_non_block_input(void) {
@@ -147,8 +180,29 @@ static void init_idt_table(void) {
      */
     strcpy(idt[0].name, "listc");
     strcpy(idt[0].description, "Lists all available commands");
-    idt[0].keymaps[0] = 0x0C;
+    idt[0].keymaps[0] = 0x0C;  // ^L
     idt[0].f = list_commands;
+
+    strcpy(idt[1].name, "trigger");
+    strcpy(idt[1].description, "Triggers a signal");
+    idt[1].keymaps[0] = 0x14;  // ^T
+    idt[1].f = trigger_signal;
+
+    strcpy(idt[2].name, "quit");
+    strcpy(idt[2].description, "Shutdown the program");
+    idt[2].keymaps[0] = 'q';
+    idt[2].f = quit_program;
+}
+
+/*
+ * map signals to keys
+ */
+void init_signals_table(void) {
+    strcpy(signals[0].name, "SIGINT");
+    signals[0].key = 0x03;
+
+    strcpy(signals[1].name, "SIGQUIT");
+    signals[1].key = 'q';
 }
 
 /*
@@ -161,7 +215,7 @@ static void find_command(char (*command)[11]) {
             return;
         }
     }
-    printf("Command '%s' not found\n", *command);
+    printf("\nCommand '%s' not found\n", *command);
 }
 
 /*
@@ -185,7 +239,48 @@ static void find_command_by_symbol(const char* symbol) {
             }
         }
     }
-    printf("Symbol '%c' not mapped\n", *symbol);
+    find_control_char(*symbol, utils.buffer);
+    printf("\nSymbol '%s' not mapped\n", utils.buffer);
+}
+
+/*
+ * function to trigger a signal
+ */
+static void trigger_signal(void) {
+    for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
+        if (strcmp(signals[i].name, "") != 0) {
+            printf("%s: %d\n", signals[i].name, i + 1);
+        }
+    }
+
+    char c;
+    char number[4];
+    int index = 0;
+
+    printf("\nEnter the index of the signal you want to trigger:\n");
+    do {
+        if (read(STDIN_FILENO, &c, 1) > 0) {
+            if (c == 0x0A || index >= (int)(sizeof(number) / sizeof(number[0])) - 1) {
+                break;
+            }
+            number[index] = c;
+            index++;
+        } else {
+            perror("The key could not be read");
+        }
+    } while (1);
+    number[index] = '\0';
+
+    /*
+     * use a local function to convert the string to int
+     */
+    index = convert_from_string_to_int(number);
+
+    if (index <= 0 || index > (int)(sizeof(signals) / sizeof(signals[0]))) {
+        printf("\nSignal not available for the index '%d'\n", index);
+        return;
+    }
+    find_command_by_symbol((const char*)&signals[index - 1].key);
 }
 
 /*
@@ -204,3 +299,23 @@ static void list_commands(void) {
         }
     }
 }
+
+/*
+ * function to format control characters in a better way
+ */
+static void find_control_char(unsigned char command, char* result) {
+    if (iscntrl(command) && command < 32) {
+        result[0] = '^';
+        result[1] = command + 64;
+        result[2] = '\0';
+    } else if (command == 127) {
+        result[0] = '^';
+        result[1] = '?';
+        result[2] = '\0';
+    } else {
+        result[0] = command;
+        result[1] = '\0';
+    }
+}
+
+static void quit_program(void) { utils.quit = 1; }
