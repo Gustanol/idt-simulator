@@ -15,8 +15,9 @@ static void init_idt_table(void);
 static void init_signals_table(void);
 
 static void find_control_char(unsigned char command, char* result);
-static void find_command(char (*command)[11]);
-static void find_command_by_symbol(const char* symbol);
+static void find_command(char (*command)[15]);
+static void find_command_by_symbol(const char symbol);
+static _Bool signal_is_enabled(const char(*name));
 
 /*
  * user functions
@@ -24,6 +25,7 @@ static void find_command_by_symbol(const char* symbol);
 static void list_commands(void);
 static void trigger_signal(void);
 static void quit_program(void);
+static void mask_signal(void);
 
 /*
  * associate signals to keys
@@ -31,6 +33,7 @@ static void quit_program(void);
 typedef struct {
     char name[10];
     unsigned char key;
+    _Bool enabled;
 } SIGNALS;
 
 SIGNALS signals[5];
@@ -91,15 +94,16 @@ void run_program(void) {
     do {
         if (utils.quit) {
             restore_terminal_settings();
-            printf("\n\nquit: Program interrupted by user\n");
+            printf("quit: Program interrupted by user\n");
             break;
         }
+
         if (read(STDIN_FILENO, &c, 1) > 0) {
             if (c == 0x3A) /* hexadecimal value for : */ {
                 /*
                  * store command entered by user
                  */
-                char command[11];
+                char command[15];
                 system("clear");
                 int limit = (int)(sizeof(command) / sizeof(command[0]));
                 for (int i = 0; i <= limit; i++) {
@@ -142,7 +146,7 @@ void run_program(void) {
                  * the specific function 'find_command_by_symbol'
                  */
                 system("clear");
-                find_command_by_symbol(&c);
+                find_command_by_symbol(c);
             }
         } else {
             perror("\nThe entered key could not be read\n");
@@ -186,12 +190,19 @@ static void init_idt_table(void) {
     strcpy(idt[1].name, "trigger");
     strcpy(idt[1].description, "Triggers a signal");
     idt[1].keymaps[0] = 0x14;  // ^T
+    idt[1].keymaps[1] = 0x0E;
     idt[1].f = trigger_signal;
 
     strcpy(idt[2].name, "quit");
     strcpy(idt[2].description, "Shutdown the program");
-    idt[2].keymaps[0] = 'q';
+    idt[2].keymaps[0] = 0x71;  // q
+    idt[2].keymaps[1] = 0x51;
     idt[2].f = quit_program;
+
+    strcpy(idt[3].name, "mask");
+    strcpy(idt[3].description, "Masks an enabled signal");
+    idt[3].keymaps[0] = 0x0D;  // ^M
+    idt[3].f = mask_signal;
 }
 
 /*
@@ -200,15 +211,17 @@ static void init_idt_table(void) {
 void init_signals_table(void) {
     strcpy(signals[0].name, "SIGINT");
     signals[0].key = 0x03;
+    signals[0].enabled = 1;
 
     strcpy(signals[1].name, "SIGQUIT");
-    signals[1].key = 'q';
+    signals[1].key = 0x71;
+    signals[1].enabled = 1;
 }
 
 /*
  * function to find and call a function by the given command
  */
-static void find_command(char (*command)[11]) {
+static void find_command(char (*command)[15]) {
     for (int i = 0; i < (int)(sizeof(idt) / sizeof(idt[0])); i++) {
         if (strcmp(idt[i].name, *command) == 0) {
             idt[i].f();
@@ -221,7 +234,15 @@ static void find_command(char (*command)[11]) {
 /*
  * function to find command by the given symbol
  */
-static void find_command_by_symbol(const char* symbol) {
+static void find_command_by_symbol(const char symbol) {
+    /*
+    if (signal_is_enabled(NULL, symbol)) {
+        find_control_char(*symbol, utils.buffer);
+        printf("The signal associated to '%s' is current disabled\n", utils.buffer);
+        return;
+    }
+    */
+
     /*
      * iterates for each command
      *
@@ -233,14 +254,14 @@ static void find_command_by_symbol(const char* symbol) {
      */
     for (int i = 0; i < (int)(sizeof(idt) / sizeof(idt[0])); i++) {
         for (int j = 0; j < (int)(sizeof(idt[i].keymaps) / sizeof(idt[i].keymaps[0])); j++) {
-            if (strcmp(&idt[i].keymaps[j], symbol) == 0) {
+            if (idt[i].keymaps[j] == symbol) {
                 idt[i].f();
                 return;
             }
         }
     }
-    find_control_char(*symbol, utils.buffer);
-    printf("\nSymbol '%s' not mapped\n", utils.buffer);
+    find_control_char(symbol, utils.buffer);
+    printf("Symbol '%s' not mapped\n", utils.buffer);
 }
 
 /*
@@ -272,15 +293,34 @@ static void trigger_signal(void) {
     number[index] = '\0';
 
     /*
-     * use a local function to convert the string to int
+     * uses a local function to convert the string to int
      */
     index = convert_from_string_to_int(number);
+    printf("%d", signal_is_enabled((const char*)&signals[index - 1].name));
+    if (!signal_is_enabled((const char*)&signals[index - 1].name)) {
+        printf("\n%s is current disabled\n", signals[index - 1].name);
+        return;
+    }
 
     if (index <= 0 || index > (int)(sizeof(signals) / sizeof(signals[0]))) {
         printf("\nSignal not available for the index '%d'\n", index);
         return;
     }
-    find_command_by_symbol((const char*)&signals[index - 1].key);
+    find_command_by_symbol((const char)signals[index - 1].key);
+}
+
+static void mask_signal(void) {}
+
+/*
+ * function to verify if a signal is current enabled using its name
+ */
+static _Bool signal_is_enabled(const char(*name)) {
+    for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
+        if (strcmp(signals[i].name, name) == 0) {
+            return (signals[i].enabled) ? 1 : 0;
+        }
+    }
+    return 1;
 }
 
 /*
