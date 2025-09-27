@@ -30,6 +30,8 @@ static void trigger_signal(void);
 static void quit_program(void);
 static void mask_signal(void);
 static void unmask_signal(void);
+static void mask_all_signals(void);
+static void unmask_all_signals(void);
 static void clear_buffer(void);
 static void print_logs(void);
 
@@ -50,7 +52,7 @@ SIGNALS signals[5];
  * struct to define handlers
  */
 typedef struct {
-    char name[10];
+    char name[15];
     char description[50];
     char keymaps[3];
     void (*f)(void);
@@ -258,25 +260,45 @@ static void init_idt_table(void) {
     idt[4].f = unmask_signal;
 
     /*
+     * defines 'maskall' as a command
+     *
+     * it masks all enabled signals
+     */
+    strcpy(idt[5].name, "maskall\0");
+    strcpy(idt[5].description, "Masks all signals");
+    idt[5].keymaps[0] = 0x0B;  // ^K
+    idt[5].f = mask_all_signals;
+
+    /*
+     * defines 'unmaskall' as a command
+     *
+     * it unmasks all disabled signals
+     */
+    strcpy(idt[6].name, "unmaskall\0");
+    strcpy(idt[6].description, "Unmasks all signals");
+    idt[6].keymaps[0] = 0x01;  // ^A
+    idt[6].f = unmask_all_signals;
+
+    /*
      * defines 'clear' as a local command
      *
      * it clear the buffer
      */
-    strcpy(idt[5].name, "clear\0");
-    strcpy(idt[5].description, "Clear the current buffer");
-    idt[5].keymaps[0] = 0x43;  // C
-    idt[5].f = clear_buffer;
+    strcpy(idt[7].name, "clear\0");
+    strcpy(idt[7].description, "Clear the current buffer");
+    idt[7].keymaps[0] = 0x43;  // C
+    idt[7].f = clear_buffer;
 
     /*
      * defines 'logs' as a command
      *
      * it prints some logs of the current session (not all)
      */
-    strcpy(idt[6].name, "logs\0");
-    strcpy(idt[6].description, "Print some logs of the current session");
-    idt[6].keymaps[0] = 0x4C;
-    idt[6].keymaps[1] = 0x6C;
-    idt[6].f = print_logs;
+    strcpy(idt[8].name, "logs\0");
+    strcpy(idt[8].description, "Print some logs of the current session");
+    idt[8].keymaps[0] = 0x4C;
+    idt[8].keymaps[1] = 0x6C;
+    idt[8].f = print_logs;
 }
 
 /*
@@ -302,7 +324,7 @@ static void find_command(char (*command)[15]) {
             return;
         }
     }
-    printf("\nCommand '%s' not found\n", *command);
+    printf("\n  Command '%s' not found\n", *command);
 }
 
 /*
@@ -333,7 +355,7 @@ static void find_command_by_symbol(const char symbol) {
         }
     }
     find_control_char(symbol, utils.buffer);
-    printf("Symbol '%s' not mapped\n", utils.buffer);
+    printf("  Symbol '%s' not mapped\n", utils.buffer);
 }
 
 /*
@@ -346,7 +368,7 @@ static void trigger_signal(void) {
     }
 
     if (!signal_is_enabled((const char*)&signals[index - 1].name, 0)) {
-        printf("\n%s is current disabled\n", signals[index - 1].name);
+        printf("\n  %s is current disabled\n", signals[index - 1].name);
         return;
     }
 
@@ -363,14 +385,41 @@ static void mask_signal(void) {
     }
 
     if (!signal_is_enabled((const char*)&signals[index - 1].name, 0)) {
-        printf("\n%s signals is already disabled\n", signals[index - 1].name);
+        printf("\n  %s signals is already disabled\n", signals[index - 1].name);
         return;
     }
 
     signals[index - 1].enabled = 0;
-    printf("\n%s signal has been disabled\n", signals[index - 1].name);
+    printf("\n  %s signal has been disabled\n", signals[index - 1].name);
 }
 
+/*
+ * function to masks all active signals at once
+ */
+static void mask_all_signals(void) {
+    for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
+        if (signals[i].enabled) {
+            signals[i].enabled = 0;
+        }
+    }
+    printf("  All signals were masked\n");
+}
+
+/*
+ * function to unmasks all disabled signals at once
+ */
+static void unmask_all_signals(void) {
+    for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
+        if (!signals[i].enabled) {
+            signals[i].enabled = 1;
+        }
+    }
+    printf("  All signals were unmasked\n");
+}
+
+/*
+ * function to unmask a given signal
+ */
 static void unmask_signal(void) {
     int index = multiple_signal_choose("unmask");
     if (index == -1) {
@@ -378,12 +427,12 @@ static void unmask_signal(void) {
     }
 
     if (signal_is_enabled((const char*)&signals[index - 1].name, 0)) {
-        printf("\n%s signals is already active\n", signals[index - 1].name);
+        printf("\n  %s signals is already active\n", signals[index - 1].name);
         return;
     }
 
     signals[index - 1].enabled = 1;
-    printf("\n%s signal has been active\n", signals[index - 1].name);
+    printf("\n  %s signal has been active\n", signals[index - 1].name);
 }
 
 /*
