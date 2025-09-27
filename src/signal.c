@@ -18,6 +18,7 @@ static void find_control_char(unsigned char command, char* result);
 static void find_command(char (*command)[15]);
 static void find_command_by_symbol(const char symbol);
 static _Bool signal_is_enabled(const char(*name));
+static int multiple_signal_choose(void);
 
 /*
  * user functions
@@ -26,6 +27,10 @@ static void list_commands(void);
 static void trigger_signal(void);
 static void quit_program(void);
 static void mask_signal(void);
+static void unmask_signal(void);
+static void clear_buffer(void);
+
+static void generic_error_handler(char* message);
 
 /*
  * associate signals to keys
@@ -84,9 +89,9 @@ void run_program(void) {
     init_signals_table();
 
     printf("IDT simulator\n\n");
-    printf("- Type ':' to enter in command line\n");
+    printf("  Type ':' to enter in command line\n");
     printf(
-        "- Use the 'listc' (in command line) command or the '^L' symbol to "
+        "  Use the 'listc' (in command line) command or the '^L' symbol to "
         "see all available "
         "commands\n\n");
 
@@ -104,7 +109,7 @@ void run_program(void) {
                  * store command entered by user
                  */
                 char command[15];
-                system("clear");
+                clear_buffer();
                 int limit = (int)(sizeof(command) / sizeof(command[0]));
                 for (int i = 0; i <= limit; i++) {
                     if (read(STDIN_FILENO, &c, 1) > 0) {
@@ -145,7 +150,7 @@ void run_program(void) {
                  * this block will treat symbols and associate them to commands using
                  * the specific function 'find_command_by_symbol'
                  */
-                system("clear");
+                clear_buffer();
                 find_command_by_symbol(c);
             }
         } else {
@@ -182,38 +187,47 @@ static void init_idt_table(void) {
     /*
      * define 'listc' as a command
      */
-    strcpy(idt[0].name, "listc");
+    strcpy(idt[0].name, "listc\0");
     strcpy(idt[0].description, "Lists all available commands");
     idt[0].keymaps[0] = 0x0C;  // ^L
     idt[0].f = list_commands;
 
-    strcpy(idt[1].name, "trigger");
+    strcpy(idt[1].name, "trigger\0");
     strcpy(idt[1].description, "Triggers a signal");
     idt[1].keymaps[0] = 0x14;  // ^T
-    idt[1].keymaps[1] = 0x0E;
     idt[1].f = trigger_signal;
 
-    strcpy(idt[2].name, "quit");
+    strcpy(idt[2].name, "quit\0");
     strcpy(idt[2].description, "Shutdown the program");
     idt[2].keymaps[0] = 0x71;  // q
-    idt[2].keymaps[1] = 0x51;
+    idt[2].keymaps[1] = 0x51;  // Q
     idt[2].f = quit_program;
 
-    strcpy(idt[3].name, "mask");
+    strcpy(idt[3].name, "mask\0");
     strcpy(idt[3].description, "Masks an enabled signal");
     idt[3].keymaps[0] = 0x0D;  // ^M
     idt[3].f = mask_signal;
+
+    strcpy(idt[4].name, "unmask\0");
+    strcpy(idt[4].description, "Unmasks a disabled signal");
+    idt[4].keymaps[0] = 0x15;  // ^U
+    idt[4].f = unmask_signal;
+
+    strcpy(idt[5].name, "clear\0");
+    strcpy(idt[5].description, "Clear the current buffer");
+    idt[5].keymaps[0] = 0x43;  // C
+    idt[5].f = clear_buffer;
 }
 
 /*
  * map signals to keys
  */
 void init_signals_table(void) {
-    strcpy(signals[0].name, "SIGINT");
+    strcpy(signals[0].name, "SIGINT\0");
     signals[0].key = 0x03;
     signals[0].enabled = 1;
 
-    strcpy(signals[1].name, "SIGQUIT");
+    strcpy(signals[1].name, "SIGQUIT\0");
     signals[1].key = 0x71;
     signals[1].enabled = 1;
 }
@@ -236,11 +250,13 @@ static void find_command(char (*command)[15]) {
  */
 static void find_command_by_symbol(const char symbol) {
     /*
-    if (signal_is_enabled(NULL, symbol)) {
-        find_control_char(*symbol, utils.buffer);
+    if (!signal_is_enabled(&symbol)) {
+        find_control_char(symbol, utils.buffer);
         printf("The signal associated to '%s' is current disabled\n", utils.buffer);
         return;
     }
+
+    change functions names to add more clearity
     */
 
     /*
@@ -268,8 +284,58 @@ static void find_command_by_symbol(const char symbol) {
  * function to trigger a signal
  */
 static void trigger_signal(void) {
+    int index = multiple_signal_choose();
+    if (index == -1) {
+        return;
+    }
+
+    if (!signal_is_enabled((const char*)&signals[index - 1].name)) {
+        printf("\n%s is current disabled\n", signals[index - 1].name);
+        return;
+    }
+
+    find_command_by_symbol((const char)signals[index - 1].key);
+}
+
+/*
+ * a function to mask a signal and disable it
+ */
+static void mask_signal(void) {
+    int index = multiple_signal_choose();
+    if (index == -1) {
+        return;
+    }
+
+    if (!signal_is_enabled((const char*)&signals[index - 1].name)) {
+        printf("\n%s signals is already disabled\n", signals[index - 1].name);
+        return;
+    }
+
+    signals[index - 1].enabled = 0;
+    printf("\n%s signal has been disabled\n", signals[index - 1].name);
+}
+
+static void unmask_signal(void) {
+    int index = multiple_signal_choose();
+    if (index == -1) {
+        return;
+    }
+
+    if (signal_is_enabled((const char*)&signals[index - 1].name)) {
+        printf("\n%s signals is already active\n", signals[index - 1].name);
+        return;
+    }
+
+    signals[index - 1].enabled = 1;
+    printf("\n%s signal has been active\n", signals[index - 1].name);
+}
+
+/*
+ * util function to show all available signals and allow to choose one of it
+ */
+static int multiple_signal_choose(void) {
     for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
-        if (strcmp(signals[i].name, "") != 0) {
+        if (strcmp((const char*)signals[i].name, "") != 0) {
             printf("%s: %d\n", signals[i].name, i + 1);
         }
     }
@@ -287,7 +353,7 @@ static void trigger_signal(void) {
             number[index] = c;
             index++;
         } else {
-            perror("The key could not be read");
+            perror("The key could not be read\n");
         }
     } while (1);
     number[index] = '\0';
@@ -296,27 +362,20 @@ static void trigger_signal(void) {
      * uses a local function to convert the string to int
      */
     index = convert_from_string_to_int(number);
-    printf("%d", signal_is_enabled((const char*)&signals[index - 1].name));
-    if (!signal_is_enabled((const char*)&signals[index - 1].name)) {
-        printf("\n%s is current disabled\n", signals[index - 1].name);
-        return;
-    }
 
     if (index <= 0 || index > (int)(sizeof(signals) / sizeof(signals[0]))) {
         printf("\nSignal not available for the index '%d'\n", index);
-        return;
+        return -1;
     }
-    find_command_by_symbol((const char)signals[index - 1].key);
+    return index;
 }
-
-static void mask_signal(void) {}
 
 /*
  * function to verify if a signal is current enabled using its name
  */
 static _Bool signal_is_enabled(const char(*name)) {
     for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
-        if (strcmp(signals[i].name, name) == 0) {
+        if (strcmp((const char*)signals[i].name, name) == 0) {
             return (signals[i].enabled) ? 1 : 0;
         }
     }
@@ -335,7 +394,7 @@ static void list_commands(void) {
      */
     for (int i = 0; i < (int)(sizeof(idt) / sizeof(idt[0])); i++) {
         if (strcmp(idt[i].name, "") != 0) {
-            printf("- %s: %s\n", idt[i].name, idt[i].description);
+            printf(" %s: %s\n", idt[i].name, idt[i].description);
         }
     }
 }
@@ -344,6 +403,9 @@ static void list_commands(void) {
  * function to format control characters in a better way
  */
 static void find_control_char(unsigned char command, char* result) {
+    /*
+     * verifies if it is a control character
+     */
     if (iscntrl(command) && command < 32) {
         result[0] = '^';
         result[1] = command + 64;
@@ -359,3 +421,18 @@ static void find_control_char(unsigned char command, char* result) {
 }
 
 static void quit_program(void) { utils.quit = 1; }
+
+/*
+ * local function to clear the buffer
+ */
+static void clear_buffer(void) {
+    /*
+     * calls the system command to clear the buffer
+     */
+    system("clear");
+}
+
+/*
+ * simple function to simulate errors handlers
+ */
+static void generic_error_handler(char* message) { printf("\n%s", message); }
