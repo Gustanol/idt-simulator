@@ -18,7 +18,7 @@ static void init_signals_table(void);
 static void find_control_char(unsigned char command, char* result);
 static void find_command(char (*command)[15]);
 static void find_command_by_symbol(const char symbol);
-static _Bool signal_is_enabled(const char(*name), _Bool symbol);
+static _Bool signal_is_enabled(const char(*name));
 static int multiple_signal_choose(const char* name);
 static void register_log(const char* command);
 
@@ -312,6 +312,14 @@ void init_signals_table(void) {
     strcpy(signals[1].name, "SIGQUIT\0");
     signals[1].key = 0x71;
     signals[1].enabled = 1;
+
+    strcpy(signals[2].name, "SIGLIST\0");
+    signals[2].key = 0x0C;
+    signals[2].enabled = 1;
+
+    strcpy(signals[3].name, "SIGTRI\0");
+    signals[3].key = 0x14;
+    signals[3].enabled = 1;
 }
 
 /*
@@ -320,6 +328,10 @@ void init_signals_table(void) {
 static void find_command(char (*command)[15]) {
     for (int i = 0; i < (int)(sizeof(idt) / sizeof(idt[0])); i++) {
         if (strcmp(idt[i].name, *command) == 0) {
+            if (!signal_is_enabled(&idt[i].keymaps[0])) {
+                printf("The signal associated to '%s' is current disabled\n", *command);
+                return;
+            }
             idt[i].f();
             return;
         }
@@ -331,7 +343,7 @@ static void find_command(char (*command)[15]) {
  * function to find command by the given symbol
  */
 static void find_command_by_symbol(const char symbol) {
-    if (!signal_is_enabled(&symbol, 1)) {
+    if (!signal_is_enabled(&symbol)) {
         find_control_char(symbol, utils.buffer);
         printf("The signal associated to '%s' is current disabled\n", utils.buffer);
         return;
@@ -367,7 +379,7 @@ static void trigger_signal(void) {
         return;
     }
 
-    if (!signal_is_enabled((const char*)&signals[index - 1].name, 0)) {
+    if (!signal_is_enabled((const char*)&signals[index - 1].name)) {
         printf("\n  %s is current disabled\n", signals[index - 1].name);
         return;
     }
@@ -384,7 +396,7 @@ static void mask_signal(void) {
         return;
     }
 
-    if (!signal_is_enabled((const char*)&signals[index - 1].name, 0)) {
+    if (!signal_is_enabled((const char*)&signals[index - 1].name)) {
         printf("\n  %s signals is already disabled\n", signals[index - 1].name);
         return;
     }
@@ -426,7 +438,7 @@ static void unmask_signal(void) {
         return;
     }
 
-    if (signal_is_enabled((const char*)&signals[index - 1].name, 0)) {
+    if (signal_is_enabled((const char*)&signals[index - 1].name)) {
         printf("\n  %s signals is already active\n", signals[index - 1].name);
         return;
     }
@@ -478,12 +490,10 @@ static int multiple_signal_choose(const char* name) {
 /*
  * function to verify if a signal is current enabled using its name
  */
-static _Bool signal_is_enabled(const char(*name), _Bool symbol) {
+static _Bool signal_is_enabled(const char(*name)) {
     _Bool active = 1;
     for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
-        if (!symbol && strcmp((const char*)signals[i].name, name) == 0) {
-            active = (signals[i].enabled) ? 1 : 0;
-        } else if (symbol && signals[i].key == (unsigned char)*name) {
+        if (signals[i].key == (unsigned char)*name) {
             active = (signals[i].enabled) ? 1 : 0;
         }
     }
