@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "math-utils.h"
@@ -17,8 +18,9 @@ static void init_signals_table(void);
 static void find_control_char(unsigned char command, char* result);
 static void find_command(char (*command)[15]);
 static void find_command_by_symbol(const char symbol);
-static _Bool signal_is_enabled(const char(*name));
-static int multiple_signal_choose(void);
+static _Bool signal_is_enabled(const char(*name), _Bool symbol);
+static int multiple_signal_choose(const char* name);
+static void register_log(const char* command);
 
 /*
  * user functions
@@ -29,6 +31,7 @@ static void quit_program(void);
 static void mask_signal(void);
 static void unmask_signal(void);
 static void clear_buffer(void);
+static void print_logs(void);
 
 static void generic_error_handler(char* message);
 
@@ -59,14 +62,27 @@ IDT idt[10];
 static struct termios old_tio, new_tio;
 
 /*
- * struct to group some utils variables
+ * struct to group some useful variables
  */
 typedef struct {
     _Bool quit;
     char buffer[3];
+    const char current_signal;
+    int log_index;
 } UTILS;
 
 UTILS utils = {0};
+
+/*
+ * struct to store logs of the current session
+ */
+typedef struct {
+    time_t timestamp;
+    struct tm tm_info;
+    char command[50];
+} LOGS;
+
+LOGS logs[30];
 
 /*
  * Termios struct
@@ -99,7 +115,7 @@ void run_program(void) {
     do {
         if (utils.quit) {
             restore_terminal_settings();
-            printf("quit: Program interrupted by user\n");
+            printf("INTERRUPTION: Program interrupted by user\n");
             break;
         }
 
@@ -134,6 +150,8 @@ void run_program(void) {
                     }
                 }
 
+                register_log(command);
+
                 /*
                  * calls `find_command` function to try to find the entered command
                  */
@@ -146,6 +164,7 @@ void run_program(void) {
                  * for other cases, try to find a symbol
                  */
             } else {
+                register_log(&c);
                 /*
                  * this block will treat symbols and associate them to commands using
                  * the specific function 'find_command_by_symbol'
@@ -172,7 +191,7 @@ static void init_non_block_input(void) {
      * disable canonical mode - buffered input (expects no longer for enter key to
      * register commands)
      */
-    new_tio.c_lflag &= ~ICANON;
+    new_tio.c_lflag &= ~(ICANON | ISIG);
     tcsetattr(STDIN_FILENO, TCSANOW, &new_tio);  // apply settings
 }
 
@@ -185,38 +204,79 @@ static void restore_terminal_settings(void) {
 
 static void init_idt_table(void) {
     /*
-     * define 'listc' as a command
+     * defines 'listc' as a command
+     *
+     * it prints all available mappend commands
      */
     strcpy(idt[0].name, "listc\0");
     strcpy(idt[0].description, "Lists all available commands");
     idt[0].keymaps[0] = 0x0C;  // ^L
     idt[0].f = list_commands;
 
+    /*
+     * defines 'trigger' as a command
+     *
+     * it triggers a specific defined signal
+     */
     strcpy(idt[1].name, "trigger\0");
     strcpy(idt[1].description, "Triggers a signal");
     idt[1].keymaps[0] = 0x14;  // ^T
     idt[1].f = trigger_signal;
 
+    /*
+     * defines 'quit' as a command
+     *
+     * it just shutdown the program
+     */
     strcpy(idt[2].name, "quit\0");
-    strcpy(idt[2].description, "Shutdown the program");
+    strcpy(idt[2].description, "Interrupts the program");
     idt[2].keymaps[0] = 0x71;  // q
     idt[2].keymaps[1] = 0x51;  // Q
+    idt[2].keymaps[2] = 0x03;  // ^C
     idt[2].f = quit_program;
 
+    /*
+     * defines 'mask' as a command
+     *
+     * it masks (disable) a signal
+     */
     strcpy(idt[3].name, "mask\0");
     strcpy(idt[3].description, "Masks an enabled signal");
     idt[3].keymaps[0] = 0x0D;  // ^M
     idt[3].f = mask_signal;
 
+    /*
+     * defines 'unmask' as a command
+     *
+     * it unmasks (enable) a signal
+     *
+     * it has the opposite function of 'mask' command
+     */
     strcpy(idt[4].name, "unmask\0");
     strcpy(idt[4].description, "Unmasks a disabled signal");
     idt[4].keymaps[0] = 0x15;  // ^U
     idt[4].f = unmask_signal;
 
+    /*
+     * defines 'clear' as a local command
+     *
+     * it clear the buffer
+     */
     strcpy(idt[5].name, "clear\0");
     strcpy(idt[5].description, "Clear the current buffer");
     idt[5].keymaps[0] = 0x43;  // C
     idt[5].f = clear_buffer;
+
+    /*
+     * defines 'logs' as a command
+     *
+     * it prints some logs of the current session (not all)
+     */
+    strcpy(idt[6].name, "logs\0");
+    strcpy(idt[6].description, "Print some logs of the current session");
+    idt[6].keymaps[0] = 0x4C;
+    idt[6].keymaps[1] = 0x6C;
+    idt[6].f = print_logs;
 }
 
 /*
@@ -249,15 +309,11 @@ static void find_command(char (*command)[15]) {
  * function to find command by the given symbol
  */
 static void find_command_by_symbol(const char symbol) {
-    /*
-    if (!signal_is_enabled(&symbol)) {
+    if (!signal_is_enabled(&symbol, 1)) {
         find_control_char(symbol, utils.buffer);
         printf("The signal associated to '%s' is current disabled\n", utils.buffer);
         return;
     }
-
-    change functions names to add more clearity
-    */
 
     /*
      * iterates for each command
@@ -284,12 +340,12 @@ static void find_command_by_symbol(const char symbol) {
  * function to trigger a signal
  */
 static void trigger_signal(void) {
-    int index = multiple_signal_choose();
+    int index = multiple_signal_choose("trigger");
     if (index == -1) {
         return;
     }
 
-    if (!signal_is_enabled((const char*)&signals[index - 1].name)) {
+    if (!signal_is_enabled((const char*)&signals[index - 1].name, 0)) {
         printf("\n%s is current disabled\n", signals[index - 1].name);
         return;
     }
@@ -298,15 +354,15 @@ static void trigger_signal(void) {
 }
 
 /*
- * a function to mask a signal and disable it
+ * a function to mask a signal (disable it)
  */
 static void mask_signal(void) {
-    int index = multiple_signal_choose();
+    int index = multiple_signal_choose("mask");
     if (index == -1) {
         return;
     }
 
-    if (!signal_is_enabled((const char*)&signals[index - 1].name)) {
+    if (!signal_is_enabled((const char*)&signals[index - 1].name, 0)) {
         printf("\n%s signals is already disabled\n", signals[index - 1].name);
         return;
     }
@@ -316,12 +372,12 @@ static void mask_signal(void) {
 }
 
 static void unmask_signal(void) {
-    int index = multiple_signal_choose();
+    int index = multiple_signal_choose("unmask");
     if (index == -1) {
         return;
     }
 
-    if (signal_is_enabled((const char*)&signals[index - 1].name)) {
+    if (signal_is_enabled((const char*)&signals[index - 1].name, 0)) {
         printf("\n%s signals is already active\n", signals[index - 1].name);
         return;
     }
@@ -333,7 +389,7 @@ static void unmask_signal(void) {
 /*
  * util function to show all available signals and allow to choose one of it
  */
-static int multiple_signal_choose(void) {
+static int multiple_signal_choose(const char* name) {
     for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
         if (strcmp((const char*)signals[i].name, "") != 0) {
             printf("%s: %d\n", signals[i].name, i + 1);
@@ -344,7 +400,7 @@ static int multiple_signal_choose(void) {
     char number[4];
     int index = 0;
 
-    printf("\nEnter the index of the signal you want to trigger:\n");
+    printf("\nEnter the index of the signal you want to %s:\n", name);
     do {
         if (read(STDIN_FILENO, &c, 1) > 0) {
             if (c == 0x0A || index >= (int)(sizeof(number) / sizeof(number[0])) - 1) {
@@ -373,13 +429,16 @@ static int multiple_signal_choose(void) {
 /*
  * function to verify if a signal is current enabled using its name
  */
-static _Bool signal_is_enabled(const char(*name)) {
+static _Bool signal_is_enabled(const char(*name), _Bool symbol) {
+    _Bool active = 1;
     for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
-        if (strcmp((const char*)signals[i].name, name) == 0) {
-            return (signals[i].enabled) ? 1 : 0;
+        if (!symbol && strcmp((const char*)signals[i].name, name) == 0) {
+            active = (signals[i].enabled) ? 1 : 0;
+        } else if (symbol && signals[i].key == (unsigned char)*name) {
+            active = (signals[i].enabled) ? 1 : 0;
         }
     }
-    return 1;
+    return active;
 }
 
 /*
@@ -394,7 +453,14 @@ static void list_commands(void) {
      */
     for (int i = 0; i < (int)(sizeof(idt) / sizeof(idt[0])); i++) {
         if (strcmp(idt[i].name, "") != 0) {
-            printf(" %s: %s\n", idt[i].name, idt[i].description);
+            printf(" %s: %s [", idt[i].name, idt[i].description);
+            for (int j = 0; j < (int)(sizeof(idt[i].keymaps) / sizeof(idt[i].keymaps[j])); j++) {
+                if (idt[i].keymaps[j] != *"") {
+                    find_control_char(idt[i].keymaps[j], utils.buffer);
+                    printf(" %s", utils.buffer);
+                }
+            }
+            printf(" ]\n");
         }
     }
 }
@@ -403,6 +469,7 @@ static void list_commands(void) {
  * function to format control characters in a better way
  */
 static void find_control_char(unsigned char command, char* result) {
+    strcpy(result, "");
     /*
      * verifies if it is a control character
      */
@@ -436,3 +503,43 @@ static void clear_buffer(void) {
  * simple function to simulate errors handlers
  */
 static void generic_error_handler(char* message) { printf("\n%s", message); }
+
+/*
+ * a function to register new logs
+ */
+static void register_log(const char* command) {
+    // just returns if the current index of the array is greater or equal than 30
+    if (utils.log_index >= 30) return;
+
+    strcpy(logs[utils.log_index].command, command);
+    logs[utils.log_index].command[sizeof(logs[utils.log_index].command) - 1] = '\0';
+
+    /*
+     * obtains the timestamp (not too readable)
+     */
+    logs[utils.log_index].timestamp = time(NULL);
+
+    /*
+     * store in the current index of 'logs' array using 'tm' struct, provide by 'time.h'
+     */
+    logs[utils.log_index].tm_info = *localtime(&logs[utils.log_index].timestamp);
+
+    utils.log_index++;
+}
+
+/*
+ * user function to print all stored logs
+ */
+static void print_logs(void) {
+    for (int i = 0; i < (int)(sizeof(logs) / sizeof(logs[0])); i++) {
+        if (strcmp(logs[i].command, "") != 0) {
+            char time_str[20];
+
+            /*
+             * formats the timestamp
+             */
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &logs[i].tm_info);
+            printf("[%s]: %s\n", time_str, logs[i].command);
+        }
+    }
+}
