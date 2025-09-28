@@ -19,7 +19,7 @@ static void find_control_char(unsigned char command, char* result);
 static void find_command(char (*command)[15]);
 static void find_command_by_symbol(const char symbol);
 static _Bool signal_is_enabled(const char(*name));
-static int multiple_signal_choose(const char* name);
+static int multiple_signal_choice(const char* name);
 static void register_log(const char* command);
 
 /*
@@ -374,7 +374,7 @@ static void find_command_by_symbol(const char symbol) {
  * function to trigger a signal
  */
 static void trigger_signal(void) {
-    int index = multiple_signal_choose("trigger");
+    int index = multiple_signal_choice("trigger");
     if (index == -1) {
         return;
     }
@@ -391,12 +391,12 @@ static void trigger_signal(void) {
  * a function to mask a signal (disable it)
  */
 static void mask_signal(void) {
-    int index = multiple_signal_choose("mask");
+    int index = multiple_signal_choice("mask");
     if (index == -1) {
         return;
     }
 
-    if (!signal_is_enabled((const char*)&signals[index - 1].name)) {
+    if (!signal_is_enabled((const char*)&signals[index - 1].key)) {
         printf("\n  %s signals is already disabled\n", signals[index - 1].name);
         return;
     }
@@ -433,12 +433,12 @@ static void unmask_all_signals(void) {
  * function to unmask a given signal
  */
 static void unmask_signal(void) {
-    int index = multiple_signal_choose("unmask");
+    int index = multiple_signal_choice("unmask");
     if (index == -1) {
         return;
     }
 
-    if (signal_is_enabled((const char*)&signals[index - 1].name)) {
+    if (signal_is_enabled((const char*)&signals[index - 1].key)) {
         printf("\n  %s signals is already active\n", signals[index - 1].name);
         return;
     }
@@ -450,7 +450,7 @@ static void unmask_signal(void) {
 /*
  * util function to show all available signals and allow to choose one of it
  */
-static int multiple_signal_choose(const char* name) {
+static int multiple_signal_choice(const char* name) {
     for (int i = 0; i < (int)(sizeof(signals) / sizeof(signals[0])); i++) {
         if (strcmp((const char*)signals[i].name, "") != 0) {
             printf("%s: %d\n", signals[i].name, i + 1);
