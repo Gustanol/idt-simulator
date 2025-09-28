@@ -122,4 +122,4 @@ make clean
 
 ---
 
-Made with  using  and 
+Made with ❤️ using [![Neovim](https://img.shields.io/badge/Neovim-57A143?logo=neovim&logoColor=fff)](#) and [![Artix Linux](https://img.shields.io/badge/Artix%20Linux-10A0CC?logo=artixlinux&logoColor=fff)](#)
