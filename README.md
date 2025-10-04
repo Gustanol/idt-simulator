@@ -14,7 +14,7 @@ E.G.:
 - Hardware interruptions
 - Software interruptions
 
-You can learning more by reading this [article](https://wiki.osdev.org/Interrupt_Descriptor_Table).
+You can learn more by reading this [article](https://wiki.osdev.org/Interrupt_Descriptor_Table).
 
 ---
 
